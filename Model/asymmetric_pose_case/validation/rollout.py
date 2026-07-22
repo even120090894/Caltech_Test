@@ -76,6 +76,7 @@ def run_rollout(
     window_index: int = 0,
     device_name: str = "auto",
     batch_size: int = 512,
+    history_frames: int | None = None,
 ) -> Path:
     """Export consecutive one-step predictions for visualization.
 
@@ -99,9 +100,25 @@ def run_rollout(
     modules, normalizers, checkpoint = build_modules_from_checkpoint(
         checkpoint_path, device
     )
-    cfg = config_from_dict(checkpoint["config"])
+    trained_cfg = config_from_dict(checkpoint["config"])
+    inference_cfg = config_from_dict(checkpoint["config"])
+    trained_history_frames = int(trained_cfg.data.history_frames)
+    rollout_history_frames = (
+        trained_history_frames if history_frames is None else int(history_frames)
+    )
+    if rollout_history_frames <= 0:
+        raise ValueError("history_frames must be positive.")
+    inference_cfg.data.history_frames = rollout_history_frames
+    history_override = rollout_history_frames != trained_history_frames
+    if history_override:
+        print(
+            "Warning: rollout history_frames override is an out-of-distribution "
+            "inference experiment. "
+            f"trained_history_frames={trained_history_frames}, "
+            f"rollout_history_frames={rollout_history_frames}"
+        )
 
-    records = load_calms21_sequences(cfg.data.data_path)
+    records = load_calms21_sequences(trained_cfg.data.data_path)
     sequence_index, record = _find_sequence(records, sequence_id)
     if window_index < 0 or window_index >= len(record.windows):
         raise ValueError(
@@ -109,11 +126,14 @@ def run_rollout(
             f"{len(record.windows)}."
         )
 
-    target_frames = get_branch_frames(record.windows[window_index], cfg.data.target_branch)
+    target_frames = get_branch_frames(
+        record.windows[window_index], inference_cfg.data.target_branch
+    )
     end_t = start_t + rollout_length
-    if start_t < cfg.data.min_target_index:
+    if start_t < inference_cfg.data.min_target_index:
         raise ValueError(
-            f"start_t={start_t} must be >= min_target_index={cfg.data.min_target_index}."
+            f"start_t={start_t} must be >= "
+            f"min_target_index={inference_cfg.data.min_target_index}."
         )
     if end_t > len(target_frames):
         raise ValueError(
@@ -130,7 +150,9 @@ def run_rollout(
         )
         for target_t in target_ts
     ]
-    dataset = CalMS21AsymmetricPoseDataset(records, windows, cfg.data, normalizers)
+    dataset = CalMS21AsymmetricPoseDataset(
+        records, windows, inference_cfg.data, normalizers
+    )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     for module in modules.values():
@@ -145,7 +167,7 @@ def run_rollout(
     with torch.no_grad():
         for batch in loader:
             batch = move_batch_to_device(batch, device)
-            predicted_delta_norm = forward_batch(batch, modules, cfg, device)
+            predicted_delta_norm = forward_batch(batch, modules, inference_cfg, device)
             predicted_delta = normalizers.target_delta.inverse(
                 predicted_delta_norm.detach().cpu()
             )
@@ -163,19 +185,19 @@ def run_rollout(
             previous_pose_chunks.append(previous_pose.numpy())
 
     target_pred_pose_xy = np.concatenate(predicted_pose_chunks, axis=0).reshape(
-        rollout_length, cfg.data.num_joints, cfg.data.coord_dim
+        rollout_length, inference_cfg.data.num_joints, inference_cfg.data.coord_dim
     )
     target_true_pose_xy = np.concatenate(true_pose_chunks, axis=0).reshape(
-        rollout_length, cfg.data.num_joints, cfg.data.coord_dim
+        rollout_length, inference_cfg.data.num_joints, inference_cfg.data.coord_dim
     )
     target_pred_delta_xy = np.concatenate(predicted_delta_chunks, axis=0).reshape(
-        rollout_length, cfg.data.num_joints, cfg.data.coord_dim
+        rollout_length, inference_cfg.data.num_joints, inference_cfg.data.coord_dim
     )
     target_true_delta_xy = np.concatenate(true_delta_chunks, axis=0).reshape(
-        rollout_length, cfg.data.num_joints, cfg.data.coord_dim
+        rollout_length, inference_cfg.data.num_joints, inference_cfg.data.coord_dim
     )
     previous_pose_xy = np.concatenate(previous_pose_chunks, axis=0).reshape(
-        rollout_length, cfg.data.num_joints, cfg.data.coord_dim
+        rollout_length, inference_cfg.data.num_joints, inference_cfg.data.coord_dim
     )
 
     resident_true_pose_xy = np.stack(
@@ -194,21 +216,25 @@ def run_rollout(
     )
     resident_pred_pose_xy = resident_true_pose_xy.copy()
     intruder_pred_pose_xy = intruder_true_pose_xy.copy()
-    if cfg.data.target_branch == "resident":
+    if inference_cfg.data.target_branch == "resident":
         resident_pred_pose_xy = target_pred_pose_xy
         context_pose_xy = intruder_true_pose_xy
-    elif cfg.data.target_branch == "intruder":
+    elif inference_cfg.data.target_branch == "intruder":
         intruder_pred_pose_xy = target_pred_pose_xy
         context_pose_xy = resident_true_pose_xy
     else:
-        raise ValueError(f"Unsupported target_branch: {cfg.data.target_branch}")
+        raise ValueError(
+            f"Unsupported target_branch: {inference_cfg.data.target_branch}"
+        )
 
     keypoints_pred_pair = _to_calms_pair(resident_pred_pose_xy, intruder_pred_pose_xy)
     keypoints_true_pair = _to_calms_pair(resident_true_pose_xy, intruder_true_pose_xy)
     errors = compute_pose_errors(target_pred_pose_xy, target_true_pose_xy)
     annotations = np.asarray(
         [
-            _branch_annotation(record, window_index, cfg.data.target_branch, int(target_t))
+            _branch_annotation(
+                record, window_index, inference_cfg.data.target_branch, int(target_t)
+            )
             for target_t in target_ts
         ],
         dtype=np.int64,
@@ -222,8 +248,10 @@ def run_rollout(
         rollout_length=np.asarray(rollout_length, dtype=np.int64),
         target_t=target_ts,
         annotation=annotations,
-        target_branch=np.asarray(cfg.data.target_branch),
-        context_branch=np.asarray(cfg.data.context_branch),
+        target_branch=np.asarray(inference_cfg.data.target_branch),
+        context_branch=np.asarray(inference_cfg.data.context_branch),
+        trained_history_frames=np.asarray(trained_history_frames, dtype=np.int64),
+        rollout_history_frames=np.asarray(rollout_history_frames, dtype=np.int64),
         a_pose_xy=context_pose_xy.astype(np.float32),
         b_pred_pose_xy=target_pred_pose_xy.astype(np.float32),
         b_true_pose_xy=target_true_pose_xy.astype(np.float32),
@@ -247,8 +275,11 @@ def run_rollout(
             "window_index": window_index,
             "start_t": start_t,
             "rollout_length": rollout_length,
-            "target_branch": cfg.data.target_branch,
-            "context_branch": cfg.data.context_branch,
+            "target_branch": inference_cfg.data.target_branch,
+            "context_branch": inference_cfg.data.context_branch,
+            "trained_history_frames": trained_history_frames,
+            "rollout_history_frames": rollout_history_frames,
+            "history_override": history_override,
             "checkpoint_path": checkpoint_path,
             "output_path": output_path,
             "mode": "teacher_forced_windowed_one_step_export",
@@ -309,7 +340,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         required=True,
         help=(
-            "First target frame index to predict. Must be >= history_frames. "
+            "First target frame index to predict. Must be >= rollout history_frames. "
             "第一个预测帧编号，必须不小于 history_frames。"
         ),
     )
@@ -358,6 +389,16 @@ def parse_args() -> argparse.Namespace:
             "导出推理时的 batch size，不影响训练结果，默认 512。"
         ),
     )
+    parser.add_argument(
+        "--history-frames",
+        type=int,
+        default=None,
+        help=(
+            "Override historical frame count for rollout inference only. "
+            "Defaults to checkpoint config history_frames. A different value is "
+            "an out-of-distribution comparison experiment."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -374,4 +415,5 @@ if __name__ == "__main__":
         window_index=args.window_index,
         device_name=args.device,
         batch_size=args.batch_size,
+        history_frames=args.history_frames,
     )

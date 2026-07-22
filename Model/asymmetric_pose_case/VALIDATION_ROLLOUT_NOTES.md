@@ -22,6 +22,11 @@ for each target_t in [start_t, start_t + rollout_length):
 This is teacher-forced with respect to history: every frame uses the true
 windowed features from `Caltech/calms21_task1_train_windowed_distance_lt_330.npy`.
 
+By default, rollout uses the `history_frames` value saved in the checkpoint.
+For comparison experiments, `--history-frames` can override the number of
+historical frames used only during rollout inference. This does not change the
+checkpoint config, model weights, or normalizers.
+
 This export is intended to produce an intermediate visualization state for
 `visualization.ipynb`. It does not feed frame `t` prediction back into frame
 `t + 1`.
@@ -70,6 +75,34 @@ python -m Model.asymmetric_pose_case.validation.rollout \
   --device cuda
 ```
 
+Example: train a 49-frame model:
+
+```bash
+python -m Model.asymmetric_pose_case.train \
+  --history-frames 49 \
+  --device cuda \
+  --batch-size 4096 \
+  --num-workers 4 \
+  --prefetch-factor 1 \
+  --use-amp
+```
+
+Example: use a 49-frame checkpoint but feed only the latest 9 frames at rollout
+time:
+
+```bash
+python -m Model.asymmetric_pose_case.validation.rollout \
+  --run-dir Model/asymmetric_pose_case/runs/<49_frame_run> \
+  --fold 1 \
+  --checkpoint-name best.pt \
+  --sequence-id task1/train/mouse003_task1_annotator1 \
+  --start-t 100 \
+  --rollout-length 300 \
+  --history-frames 9 \
+  --output-name rollout_predictions_hist9.npz \
+  --device cuda
+```
+
 Output path:
 
 ```text
@@ -104,7 +137,7 @@ Model/asymmetric_pose_case/runs/20260718_081453_asymmetric_pose/fold_01/rollouts
 
 --start-t
   First target frame index to predict.
-  Must be >= config.data.history_frames.
+  Must be >= the rollout history frame count.
 
 --rollout-length
   Number of consecutive target frames to export.
@@ -125,6 +158,12 @@ Model/asymmetric_pose_case/runs/20260718_081453_asymmetric_pose/fold_01/rollouts
 --batch-size
   Batch size for export inference only. It does not affect training.
   Default: 512
+
+--history-frames
+  Optional inference-time history length override.
+  Default: checkpoint config data.history_frames
+  When different from the trained value, this is an out-of-distribution
+  comparison experiment.
 ```
 
 You can also inspect these directly:
@@ -172,6 +211,14 @@ target_branch
 context_branch
   shape: scalar string
   meaning: model context branch, usually "resident"
+
+trained_history_frames
+  shape: scalar int64
+  meaning: history_frames used when the checkpoint was trained
+
+rollout_history_frames
+  shape: scalar int64
+  meaning: history_frames actually used to build rollout inputs
 
 a_pose_xy
   shape: [T, 7, 2]
@@ -288,8 +335,11 @@ animate_pose_sequence(..., keypoints_true_pair, ...)
 
 - The current export is not recursive closed-loop rollout.
 - Each frame uses the true preprocessed window for that exact `target_t`.
-- `start_t` must be at least `history_frames`.
+- `start_t` must be at least `rollout_history_frames`.
 - `start_t + rollout_length` must not exceed the selected branch length.
+- If `rollout_history_frames != trained_history_frames`, the export is a useful
+  comparison experiment, but it is not equivalent to training a model with that
+  shorter or longer history length.
 - `window_index` defaults to 0; choose another value only when the selected
   `sequence_id` contains multiple trial windows and you intentionally want one
   of them.
