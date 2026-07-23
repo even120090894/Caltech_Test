@@ -1,0 +1,85 @@
+{
+  "data": {
+    "data_path": "Caltech/calms21_task1_train_windowed_distance_lt_330.npy",
+    "feature_cache_dir": "Caltech/cache",
+    "num_mice": 2,
+    "num_joints": 7,
+    "coord_dim": 2,
+    "num_behavior_classes": 4,
+    "num_role_classes": 2,
+    "num_self_distances": 12,
+    "model_name": "multi_predict",
+    "target_branch": "intruder",
+    "context_branch": "resident",
+    "history_frames": 24,
+    "include_context_current": true,
+    "include_interaction_current": true,
+    "behavior_label_mode": "history_plus_current",
+    "use_scores": false
+  },
+  "embedding": {
+    "joint_input_dim": 2,
+    "joint_embedding_dim": 16,
+    "pose_embedding_dim": 64,
+    "velocity_embedding_dim": 32,
+    "self_distance_embedding_dim": 32,
+    "behavior_embedding_dim": 16,
+    "role_embedding_dim": 8,
+    "mouse_embedding_dim": 128,
+    "interaction_input_dim": 7,
+    "interaction_embedding_dim": 32,
+    "frame_mlp_hidden_dim": 128,
+    "dropout": 0.0
+  },
+  "sequence": {
+    "model_type": "lstm",
+    "input_dim": 128,
+    "interaction_input_dim": 32,
+    "hidden_dim": 128,
+    "interaction_hidden_dim": 64,
+    "num_layers": 2,
+    "dropout": 0.2,
+    "bidirectional": false
+  },
+  "pooling": {
+    "pooling_type": "auto",
+    "attention_hidden_dim": 64
+  },
+  "head": {
+    "hidden_dims": [
+      256,
+      128
+    ],
+    "output_dim": 14,
+    "dropout": 0.1
+  },
+  "training": {
+    "num_folds": 2,
+    "split_mode": "sequence_level",
+    "holdout_val_ratio": 0.2,
+    "seed": 42,
+    "batch_size": 8192,
+    "epochs": 120,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "num_workers": 8,
+    "device": "cuda",
+    "pin_memory": true,
+    "prefetch_factor": 1,
+    "persistent_workers": false,
+    "use_amp": true,
+    "log_every_n_steps": 50,
+    "max_train_batches": null,
+    "max_val_batches": null,
+    "output_root": "Model/asymmetric_pose_case/runs",
+    "experiment_name": "asymmetric_pose",
+    "save_checkpoints": true,
+    "save_best_checkpoint": true,
+    "save_last_checkpoint": true,
+    "export_validation_predictions": true,
+    "use_feature_cache": true
+  },
+  "normalization": {
+    "eps": 1e-06
+  }
+}

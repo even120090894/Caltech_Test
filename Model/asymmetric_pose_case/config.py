@@ -16,7 +16,7 @@ class DataConfig:
     # model_name: str = "single_predict"
     target_branch: str = "intruder"
     context_branch: str = "resident"
-    history_frames: int = 9
+    history_frames: int = 24
     include_context_current: bool = True
     include_interaction_current: bool = True
     behavior_label_mode: str = "history_plus_current"
@@ -90,7 +90,7 @@ class HeadConfig:
 
 @dataclass
 class TrainingConfig:
-    num_folds: int = 1
+    num_folds: int = 2
     split_mode: str = "sequence_level"
     # Used when num_folds == 1: reserve this ratio as a single validation split.
     # 当 num_folds == 1 时，使用该比例划出一次性的验证集。
@@ -99,8 +99,8 @@ class TrainingConfig:
     # Larger batch_size usually increases GPU utilization but also uses more VRAM.
     # 增大 batch_size 通常能提高 GPU 利用率，但会占用更多显存。
     batch_size: int = 256
-    epochs: int = 50
-    learning_rate: float = 1e-3
+    epochs: int = 120
+    learning_rate: float = 1e-3 # //TODO 学习率可变？cos 退火？
     weight_decay: float = 1e-4
     # More workers can speed up data loading, but too many may overload CPU/RAM.
     # 增加 num_workers 可以加快数据加载，但过高会占用 CPU/RAM。

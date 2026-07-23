@@ -48,6 +48,7 @@ def build_sequence_model(
         return LSTMSequenceModel(input_dim, hidden_dim, config)
     if model_type == "gru":
         return GRUSequenceModel(input_dim, hidden_dim, config)
+    # moe? KAN?
     raise ValueError(
         f"Unsupported sequence model '{model_type}'. Add a module with the same forward interface."
     )
